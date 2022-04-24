@@ -1,0 +1,176 @@
+---
+title: "data3888 proj"
+author: "Henry Irvine"
+date: "5/04/2022"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+THIS FILE IS SUPER MESSY and was used it to essentially just run console commands to test a lot of different things trying every possible way to find some compelling correlation.
+it may not even properly run right now, i will be cleaned up soon to be legible and functional 
+
+## Setup
+Below is setup code related to loading libraries and data.
+```{r, results='hide', message=FALSE,warning=FALSE}
+#results='hide'
+#message=FALSE
+#warning=FALSE
+library(tuneR)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(viridis)
+library(gapminder)
+library(tidyverse)
+library(janitor)
+library(knitr)
+library(ggcorrplot)
+rmarkdown::find_pandoc(dir = "C:\\Users\\henry\\Downloads\\pandoc-2.15-windows-x86_64\\pandoc-2.15")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+cor4 <- function(x,y,nsims = 1000){
+  good_ind = which(!(is.na(x) | is.na(y))) #which((is.numeric(x) & is.numeric(y)))
+  x = x[good_ind]
+  y = y[good_ind]
+  n = length(x)
+  sample_cor = cor(x,y)
+  less_cor = 0
+  for (i in 1:nsims){
+    perm = sample(c(1:n),n)
+    cur_t = cor(x,y[perm])
+    if (cur_t < sample_cor){
+      less_cor = less_cor + 1/nsims
+    } 
+  }
+  return(c(sample_cor, less_cor))
+}
+cor5 <- function(x,y,nsims = 1000){
+  good_ind = which(!(is.na(x) | is.na(y)))
+  x = x[good_ind]
+  y = y[good_ind]
+  x= rank(x)
+  y=rank(y)
+  n = length(x)
+  sample_cor = cor(x,y)
+  less_cor = 0
+  for (i in 1:nsims){
+    perm = sample(c(1:n),n)
+    cur_t = cor(x,y[perm])
+    if (cur_t < sample_cor){
+      less_cor = less_cor + 1/nsims
+    } 
+  }
+  return(c(sample_cor, less_cor))
+}
+normalify <- function(seq){
+  return(qnorm((2*rank(seq)-1)/(2*length(seq))))
+}
+```
+
+
+```{r}
+
+gdpdata <- read.csv("gdp-data.csv")# %>% janitor::clean_names()
+gdpdata[gdpdata == '' | gdpdata == 'n/a'] = NA
+gdpdata[gdpdata == 'Democratic Republic of the Congo'] = 'Democratic Republic of Congo'
+gdpdata[gdpdata == 'Islamic Republic of Iran'] = 'Iran'
+gdpdata[gdpdata == 'Korea'] = 'South Korea'
+gdpdata[gdpdata == 'Taiwan Province of China'] = 'Taiwan'
+gdpdata[gdpdata == "CÃ´te d'Ivoire"] = "Cote d'Ivoire"
+gdpdata[gdpdata == 'Czech Republic'] = 'Czechia'
+gdpdata[gdpdata == 'Hong Kong SAR'] = 'Hong Kong'
+gdpdata$gdp2021 <- as.numeric(gdpdata$gdp2021)
+gdpdata$gdp2019 <- as.numeric(gdpdata$gdp2019)
+gdpdata$relative_change = gdpdata$gdp2021/gdpdata$gdp2019
+names(gdpdata)[1] <- 'location'
+```
+```{r}
+
+```
+
+```{r setup, results='hide', message=FALSE,warning=FALSE}
+covid_raw <- read.csv("owid-covid-data.csv") %>% janitor::clean_names()
+covid_cleaner <- covid_raw
+covid_cleaner[which(covid_raw=="NaN")] <- NA
+which(covid_raw=="NaN")
+covid = covid_cleaner[covid_raw$date>=as.Date('2020/12/31') & covid_raw$date<=as.Date('2021/12/31'), ]
+covid <- covid %>% group_by(location)
+covid = covid %>% summarise(
+  #avg_cases_per_million = mean(total_cases_per_million, na.rm = T),
+  tot_cases_per_million = max(total_cases_per_million, na.rm = T),
+  rel_cases_per_million = max(total_cases_per_million, na.rm = T) - min(total_cases_per_million, na.rm = T),
+  death_rate = max(total_deaths_per_million, na.rm = T),
+  avg_vaccinations_per_hundred = mean(total_vaccinations_per_hundred, na.rm = T),
+  stringency_index = mean(stringency_index, na.rm = T),
+  pop = mean(population, na.rm = T),
+  population_density = mean(population_density,na.rm = T),
+  hdi = mean(human_development_index,na.rm=T),
+  median_age = mean(median_age,na.rm=T),
+  gdp_per_capita = mean(gdp_per_capita, na.rm=T)
+)
+combined = merge(covid, gdpdata[c(-3,-5)])
+combined$gdpper = combined$gdp2019/combined$pop*1e9
+```
+```{r}
+countries_of_interest = combined$location[combined$gdpper >= 2000]
+combined2 = combined[combined$location %in% countries_of_interest,]
+```
+```{r}
+combined2[combined2%in%c("NaN",-Inf)] <- NA
+combined2[combined2==-Inf] <- NA
+comb2 = data.frame(location = combined2$location,loggdpper = log10(combined2$gdpper), logpop=log10(combined2$pop),case_rate = combined2$rel_cases_per_million,death_rate = combined2$death_rate,hdi=combined2$hdi,age = combined2$median_age,growth = combined2$relative_change)
+namespec <- colnames(comb2)[-1]
+for (i in namespec){
+  hist(comb2[,i],)
+  comb2[i]<-normalify(comb2[,i])
+}
+#normalify(comb2[,'case_rate'])
+l = length(namespec)
+pmat = matrix(rep(0,l*l),l,l)
+cormat = matrix(rep(0,l*l),l,l)
+rownames(pmat) <- namespec
+colnames(pmat) <- namespec
+rownames(cormat) <- namespec
+colnames(cormat) <- namespec
+
+for (i1 in c(1:l)){
+  for (i2 in c(1:i1)){
+    A = cor4(comb2[,namespec[i1]],comb2[,namespec[i2]],nsims=1000)
+    a = A[2]
+    corr = A[1]
+    er = min(a,1-a)
+    p=sign(2*a-1) * (1-(2*er)^0.150515)
+    pmat[i1,i2] <- p
+    pmat[i2,i1] <- p
+    cormat[i1,i2] <- corr
+    cormat[i2,i1] <- corr
+  }
+}
+ggcorrplot(pmat)
+ggcorrplot(cormat)
+namespec
+model <- lm(case_rate ~ loggdpper+logpop+hdi + age+ growth, data = comb2)
+plot(model)
+summary(model)
+hist(comb2$case_rate)
+plot(model)
+specplot <- function(x,y,type = 'R'){
+  x2 = combined[x]
+  y2 = combined[y]
+  plot(rank(x2),rank(y2))
+}
+specplot('relative_change','pop')
+```
+```{r}
+```
+```{r}
+```
+
+
+What is the basic status on confirmed cases and vaccination status in these countries
+How does the gdp percentage change in the recent years
+The correlation between infection rates with in a country and how it affects the country economy
+The impact of the vaccination rates on the economies of countries (The correlation between relative change in gdp and the rates of vaccination in a country
